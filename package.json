@@ -75,12 +75,14 @@
     }
   ],
   "dependencies": {
+    "@notionhq/client": "^2.2.15",
     "@raycast/api": "^1.65.0",
     "@raycast/utils": "^1.10.1",
     "cheerio": "^1.0.0-rc.12",
     "chrono-node": "^2.7.4",
     "date-fns": "^3.2.0",
     "dayjs": "^1.11.10",
+    "dotenv": "^16.4.5",
     "eventsource-parser": "^1.1.1",
     "got-scraping": "^4.0.3",
     "gpt3-tokenizer": "^1.1.5",
@@ -92,21 +94,19 @@
     "ordinal": "^1.0.3",
     "p-limit": "^4.0.0",
     "query-string": "^8.1.0",
-    "dotenv": "^16.4.5",
     "rss-parser": "^3.13.0",
+    "typescript": "^5.2.2",
     "url-metadata": "^3.3.1",
     "validator": "^13.11.0",
     "xml2js": "^0.6.2",
-    "zod": "^3.22.4",
-    "@notionhq/client": "^2.2.15",
-    "typescript": "^5.2.2"
+    "zod": "^3.22.4"
   },
   "devDependencies": {
     "@raycast/eslint-config": "^1.0.6",
     "@types/lodash": "^4.14.202",
     "@types/node": "20.8.10",
     "@types/react": "18.2.27",
-    "@types/validator": "^13.11.8",
+    "@types/validator": "^13.12.2",
     "@types/xml2js": "^0.4.14",
     "eslint": "^8.51.0",
     "prettier": "^3.0.3"
