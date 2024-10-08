@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Source } from "./types";
+import { Digest, Source } from "./types";
 import { filterByShownStatus, shell, sleep } from "./utils/util";
 import {
   Action,
@@ -24,6 +24,7 @@ import GenTodaysDigestPanel from "./components/GenTodaysDigestPanel";
 import RedirectRoute from "./components/RedirectRoute";
 import GenDigestInBGAction from "./components/GenDigestInBGAction";
 import ShowRSSDetailAction from "./components/ShowRSSDetailAction";
+import NotionService from "./utils/notion";
 
 export default function DailyReadCommand(props: LaunchProps<{ launchContext: { autoGenDigest: boolean } }>) {
   const autoGenDigest = props?.launchContext?.autoGenDigest ?? false;
@@ -31,6 +32,11 @@ export default function DailyReadCommand(props: LaunchProps<{ launchContext: { a
   const [otherItems, setOtherItems] = useState<Source[]>();
   const itemsLength = (todayItems?.length ?? 0) + (otherItems?.length ?? 0);
   const { data: todaysDigest, revalidate } = usePromise(getTodaysDigest);
+
+  const sendToNotion = async (digest: Digest) => {
+    const notionService = new NotionService();
+    await notionService.updateMorningBriefDb(digest);
+  };
 
   const { push } = useNavigation();
 
@@ -112,6 +118,12 @@ export default function DailyReadCommand(props: LaunchProps<{ launchContext: { a
                           actionTitle="Share This Digest"
                           articleTitle={todaysDigest.title}
                           articleContent={todaysDigest.content}
+                        />
+                        <Action
+                          title="Send to Notion"
+                          icon={Icon.Upload}
+                          onAction={() => sendToNotion(todaysDigest)}
+                          shortcut={{ modifiers: ["cmd"], key: "n" }}
                         />
                         {manageSourceListActionNode}
                       </CustomActionPanel>

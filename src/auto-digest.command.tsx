@@ -3,17 +3,26 @@ import { sendNotification } from "./utils/notify";
 import { normalizePreference } from "./utils/preference";
 import * as chrono from "chrono-node";
 import { bizGenDigest, categorizeSources, isValidNotificationTime } from "./utils/biz";
-import { isAfter, subMinutes } from "date-fns";
+import { isAfter, subMinutes, differenceInMinutes, addMinutes, addDays } from "date-fns";
 import { NO_API_KEY, NO_FEEDS, matchError } from "./utils/error";
-import { retry } from "./utils/util";
-import { getLastNotifyTime, getSources, checkTodaysDigestExist, saveLastNotifyTime } from "./store";
+import {
+  getLastNotifyTime,
+  getSources,
+  checkTodaysDigestExist,
+  saveLastNotifyTime,
+  getTodaysDigest,
+  saveNextScheduledTime,
+  getNextScheduledTime,
+} from "./store";
 import dayjs from "dayjs";
+import NotionService from "./utils/notion";
+import { Digest } from "./types";
 
-async function handleGenDigest(onSuccess: () => void = () => {}, enableError: boolean = false) {
+async function handleGenDigest(onSuccess: (digest: Digest) => void = () => {}, enableError: boolean = false) {
   try {
     console.log("start to gen digest...");
-    await bizGenDigest();
-    await onSuccess();
+    const digest = await bizGenDigest();
+    await onSuccess(digest);
   } catch (err: any) {
     if (!enableError) return;
     // 已没有抛出此错误，不会走到此逻辑
@@ -32,31 +41,10 @@ async function handleGenDigest(onSuccess: () => void = () => {}, enableError: bo
       });
       return;
     }
-
-    if (matchError(err, "ECONNRESET")) {
-      await sendNotification({
-        title: "Daily Digest Failed",
-        message: "Check your network and try again.",
-      });
-      return;
-    }
-
-    if (matchError(err, "timed out")) {
-      await sendNotification({
-        title: "Daily Digest Failed",
-        message: "Check your network, or add http proxy and try again.",
-      });
-      return;
-    }
-
-    await sendNotification({
-      title: "Daily Digest Failed",
-      message: `${err.message.slice(0, 100)}...`,
-    });
   }
 }
 
-async function handleSuccess() {
+async function handleSuccess(digest: Digest) {
   await sendNotification({
     title: "Daily Digest Success",
     message: "View 'Daily Read' command to see today's digest.",
@@ -65,6 +53,22 @@ async function handleSuccess() {
   await updateCommandMetadata({
     subtitle: `Last auto digest at: ${dayjs().format("YYYY-MM-DD HH:mm")}`,
   });
+
+  const notionService = new NotionService();
+  try {
+    const result = await notionService.updateMorningBriefDb(digest);
+    console.log("Notion update successful:", result);
+    await sendNotification({
+      title: "Notion Update Success",
+      message: "Today's digest has been added to Notion.",
+    });
+  } catch (error) {
+    console.error("Failed to update Notion:", error);
+    await sendNotification({
+      title: "Notion Update Failed",
+      message: "Failed to add today's digest to Notion.",
+    });
+  }
 }
 
 export default async function Command(props: LaunchProps<{ launchContext: { regenerate: boolean } }>) {
@@ -72,70 +76,91 @@ export default async function Command(props: LaunchProps<{ launchContext: { rege
   const sources = await getSources();
   const { todayItems } = categorizeSources(sources);
   const { notificationTime } = normalizePreference();
+  const defaultNotificationTime = "8am";
+  const finalNotificationTime = notificationTime || defaultNotificationTime;
 
   if (environment.launchType === LaunchType.UserInitiated) {
-    showToast(Toast.Style.Success, `Activited!🥳 Your daily digest will automatically generate at ${notificationTime}`);
+    showToast(
+      Toast.Style.Success,
+      `Activated! Your daily digest will automatically generate at ${finalNotificationTime}`,
+    );
   }
 
-  // 若没有当日read，则无需通知
+  // If there are no items for today, no need to notify
   if (todayItems.length === 0) return;
 
-  const lastNotifyTime = await getLastNotifyTime();
-
-  console.log("lastNotifyTime:", lastNotifyTime);
-
-  if (lastNotifyTime) {
-    const diffDays = dayjs().startOf("day").diff(dayjs(lastNotifyTime).startOf("day"), "day");
-
-    console.log("diffDays:", diffDays);
-
-    // 若当日已通知过，则不再通知
-    const hasNotified = diffDays === 0;
-
-    console.log("notified:", hasNotified);
-
-    if (hasNotified) {
-      return;
-    }
-  } else {
-    console.log("notified: false");
-  }
-
   const now = new Date();
-  const formattedTime = !isValidNotificationTime(notificationTime)
-    ? chrono.parseDate("9am", now)
-    : chrono.parseDate(notificationTime, now);
+  const lastNotifyTime = await getLastNotifyTime();
+  const minimumInterval = 60; // minimum interval in minutes between checks
+
+  const formattedTime = !isValidNotificationTime(finalNotificationTime)
+    ? chrono.parseDate("8am", now)
+    : chrono.parseDate(finalNotificationTime, now);
 
   const preTime = subMinutes(formattedTime, 10);
 
-  // 到了notificationTime，检测是否有当日的digest，若没有，则生成，失败则通知生成失败。若有，若是用户手动生成的，则通知已手动生成；若是自动生成的，则通知自动生成
-  if (isAfter(now, formattedTime)) {
+  // Check if it's time to perform an action
+  const nextScheduledTime = await getNextScheduledTime();
+  if (nextScheduledTime && now < new Date(nextScheduledTime)) {
+    console.log(`Not time for action yet. Next scheduled time: ${new Date(nextScheduledTime)}`);
+    return;
+  }
+
+  // If last notify time exists and it's been less than the minimum interval, wait
+  if (lastNotifyTime && differenceInMinutes(now, new Date(lastNotifyTime)) < minimumInterval) {
+    const nextCheck = addMinutes(new Date(lastNotifyTime), minimumInterval);
+    await saveNextScheduledTime(nextCheck.getTime());
+    console.log(`Too soon for next check. Next scheduled time: ${nextCheck}`);
+    return;
+  }
+
+  // Perform actions based on the current time
+  if (isAfter(now, preTime)) {
     const todaysDigestExist = await checkTodaysDigestExist();
 
-    console.log("todaysDigestExist:", todaysDigestExist);
-
     if (!todaysDigestExist || regenerate) {
-      await handleGenDigest(async () => {
-        await handleSuccess();
+      await handleGenDigest(async (digest) => {
+        await handleSuccess(digest);
       }, true);
-    } else {
-      if (await checkTodaysDigestExist("auto")) {
-        console.log(`is today's digest auto generate: true`);
-        await handleSuccess();
+    } else if (await checkTodaysDigestExist("auto")) {
+      const todaysDigest = await getTodaysDigest();
+      if (todaysDigest) {
+        await handleSuccess(todaysDigest);
       } else {
-        console.log(`is today's digest auto generate: false`);
-        await sendNotification({
-          title: "Daily Digest Success",
-          message: "You have generated it manually yourself, go to the 'Daily Read' command and check it out.",
-        });
+        console.log("Today's digest not found");
       }
+    } else {
+      console.log(`Today's digest was manually generated`);
+      await sendNotification({
+        title: "Daily Digest Success",
+        message: "You have generated it manually yourself, go to the 'Daily Read' command and check it out.",
+      });
     }
 
     await saveLastNotifyTime(+now);
-  } else if (isAfter(now, preTime)) {
-    // 若到了notificationTime的前10分钟，若没有当日digest，则开始生成digest；且反复重试
-    if (!(await checkTodaysDigestExist())) {
-      await retry(handleGenDigest, 3, 10 * 1000);
+
+    // Set the next check to the notification time for tomorrow
+    const tomorrowNotificationTime = addDays(formattedTime, 1);
+    await saveNextScheduledTime(tomorrowNotificationTime.getTime());
+  } else {
+    // If it's not yet pre-time, set the next check to the pre-time
+    // But ensure it's not earlier than the minimum interval from now
+    const nextCheck = new Date(Math.max(preTime.getTime(), addMinutes(now, minimumInterval).getTime()));
+    
+    // If nextCheck is after formattedTime (8am), set it to formattedTime
+    if (isAfter(nextCheck, formattedTime)) {
+      await saveNextScheduledTime(formattedTime.getTime());
+    } else {
+      await saveNextScheduledTime(nextCheck.getTime());
     }
+  }
+
+  // Update the command's metadata
+  const nextCheck = await getNextScheduledTime();
+  if (nextCheck) {
+    const minutesUntilNextCheck = differenceInMinutes(new Date(nextCheck), now);
+    await updateCommandMetadata({
+      subtitle: `Next check in ${minutesUntilNextCheck} minutes`,
+    });
   }
 }

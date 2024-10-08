@@ -2,10 +2,10 @@ import { LocalStorage } from "@raycast/api";
 import { Digest, Source } from "../types";
 import dayjs from "dayjs";
 import { fixSurrogatePairs } from "../utils/util";
+import { sources } from "./rss_sources";
 
 export const getSources = async (): Promise<Source[]> => {
-  const itemsJson = await LocalStorage.getItem<string>("sources");
-  return itemsJson ? JSON.parse(itemsJson) : [];
+  return sources;
 };
 
 export const saveSources = async (items: Source[]) => {
@@ -134,4 +134,17 @@ export async function getDigestGenerationCount() {
 export async function addDigestGenerationCount() {
   const count = (await getDigestGenerationCount()) ?? 0;
   await LocalStorage.setItem("digestGenerationCount", count + 1);
+}
+
+let nextScheduledTime: number | null = null;
+
+export async function saveNextScheduledTime(time: number): Promise<void> {
+  nextScheduledTime = time;
+  // Optionally, you can persist this to a database or file if needed
+  console.log(`Next scheduled time saved: ${new Date(time).toLocaleString()}`);
+}
+
+export async function getNextScheduledTime(): Promise<number | null> {
+  // Optionally, you can retrieve this from a database or file if needed
+  return nextScheduledTime;
 }
